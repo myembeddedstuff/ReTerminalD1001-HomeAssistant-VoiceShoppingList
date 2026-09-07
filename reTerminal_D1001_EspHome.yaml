@@ -1,0 +1,440 @@
+substitutions:
+  name: reterminal-d1001
+  friendly_name: reTerminal D1001
+  backlight_level: 60%
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    - priority: 800
+      then:
+        - output.set_level:
+            id: backlight_output
+            level: ${backlight_level}
+        - delay: 500ms          # give LVGL time to init
+        - lvgl.page.show: main_page
+
+esp32:
+  variant: esp32p4
+  engineering_sample: true
+  flash_size: 32MB
+  cpu_frequency: 360MHz
+  framework:
+    type: esp-idf
+    advanced:
+      enable_idf_experimental_features: true
+      execute_from_psram: false
+    sdkconfig_options:
+      CONFIG_ESP_MAIN_TASK_STACK_SIZE: "24576"
+
+psram:
+  speed: 200MHz
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+  level: DEBUG
+
+external_components:
+  - source: github://pr#16285
+    components: [gsl3670, touchscreen]
+    refresh: 1h
+  - source: github://esphome/esphome@dev
+    components: [mipi_dsi]
+    refresh: 1h
+
+esp_ldo:
+  - channel: 3
+    voltage: 2.5V
+
+esp32_hosted:
+  variant: ESP32C6
+  reset_pin: GPIO13
+  cmd_pin: GPIO6
+  clk_pin: GPIO11
+  d0_pin: GPIO7
+  d1_pin: GPIO8
+  d2_pin: GPIO9
+  d3_pin: GPIO10
+  active_high: true
+
+xl9535:
+  id: expander
+  i2c_id: misc_i2c
+
+i2c:
+  - id: lcd_i2c
+    sda:
+      ignore_strapping_warning: true
+      number: GPIO37
+    scl:
+      ignore_strapping_warning: true
+      number: GPIO38
+    scan: true
+    frequency: 400kHz
+  - id: misc_i2c
+    sda: GPIO20
+    scl: GPIO21
+    scan: true
+    frequency: 400kHz
+
+output:
+  - platform: ledc
+    id: backlight_output
+    pin: 14
+    frequency: 1220Hz
+    inverted: false
+    min_power: 15%
+
+switch:
+  - platform: gpio
+    id: battery_charge_enable
+    name: Battery Charge Enable
+    pin:
+      xl9535:
+      number: 12
+      inverted: true
+    restore_mode: ALWAYS_ON
+
+  - platform: gpio
+    id: power_hold
+    name: Power Hold
+    pin:
+      xl9535:
+      number: 10
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: gpio
+    id: vbat_enable
+    pin:
+      xl9535:
+      number: 6
+    restore_mode: ALWAYS_ON
+
+  - platform: gpio
+    name: "D1001 Speaker Amplifier"
+    id: speaker_amp_enable
+    pin:
+      xl9535: expander
+      number: 13   # Pin 13 controla el amplificador NS4150B en el D1001
+      mode: OUTPUT
+    restore_mode: ALWAYS_ON
+
+light:
+  - platform: monochromatic
+    output: backlight_output
+    name: LCD Backlight
+    id: lcd_backlight
+    restore_mode: ALWAYS_ON
+    default_transition_length: 0s
+    gamma_correct: 1.0
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+
+display:
+  - platform: mipi_dsi
+    id: main_display
+    model: SEEED-RETERMINAL-D1001
+    auto_clear_enabled: false
+    update_interval: never
+
+touchscreen:
+  - platform: gsl3670
+    i2c_id: lcd_i2c
+    model: seeed-reterminal-d1001
+
+script:
+  - id: power_down_script
+    mode: single
+    then:
+      - lvgl.page.show: power_down_page
+      - lvgl.label.update:
+          id: power_down_label
+          text: "Powering off in 3s"
+      - delay: 1s
+      - lvgl.label.update:
+          id: power_down_label
+          text: "Powering off in 2s"
+      - delay: 1s
+      - lvgl.label.update:
+          id: power_down_label
+          text: "Powering off in 1s"
+      - delay: 1s
+      - lvgl.label.update:
+          id: power_down_label
+          text: "Powering off now"
+      - delay: 500ms
+      - switch.turn_off: power_hold
+
+binary_sensor:
+  - platform: gpio
+    pin: 3
+    id: pwr_button
+    trigger_on_initial_state: false
+    on_press:
+      if:
+        condition:
+          binary_sensor.is_off: vsys_power_good
+        then:
+          script.execute: power_down_script
+    on_release:
+      - delay: 300ms
+      - script.stop: power_down_script
+      - lvgl.page.show: main_page
+      - switch.turn_on: power_hold
+  - platform: gpio
+    pin:
+      number: 4
+      inverted: true
+      mode: INPUT_PULLUP
+    name: VSYS Power Good
+    id: vsys_power_good
+
+sensor:
+  - platform: adc
+    pin: 18
+    id: vbat
+    name: Battery Voltage
+    update_interval: 10s
+    attenuation: auto
+    filters:
+      - multiply: 2.0
+
+# --- Audio: micrófono y altavoz ---
+audio_adc:
+  - platform: es7210
+    id: d1001_mic_adc
+    i2c_id: misc_i2c
+
+i2s_audio:
+  - id: mic_i2s_bus
+    i2s_mclk_pin: GPIO29
+    i2s_bclk_pin: GPIO28
+    i2s_lrclk_pin: GPIO27
+  - id: speaker_i2s_bus
+    i2s_mclk_pin: GPIO33
+    i2s_bclk_pin: GPIO32
+    i2s_lrclk_pin: GPIO31
+
+microphone:
+  - platform: i2s_audio
+    id: reterminal_mic
+    i2s_audio_id: mic_i2s_bus
+    i2s_din_pin: GPIO26
+    adc_type: external
+
+audio_dac:
+  - platform: es8311
+    i2c_id: misc_i2c
+    id: dac
+
+speaker:
+  - platform: i2s_audio
+    dac_type: external
+    i2s_dout_pin: GPIO30
+    id: speaker_i2s_audio_1
+    i2s_audio_id: speaker_i2s_bus
+    audio_dac: dac
+  - platform: mixer
+    id: mixer_speaker_id
+    output_speaker: speaker_i2s_audio_1
+    source_speakers:
+      - id: announcement_spk_mixer_input
+      - id: media_spk_mixer_input
+  - platform: resampler
+    id: media_spk_resampling_input
+    output_speaker: media_spk_mixer_input
+  - platform: resampler
+    id: announcement_spk_resampling_input
+    output_speaker: announcement_spk_mixer_input
+
+media_player:
+  - platform: speaker
+    name: "Speaker Media Player"
+    id: speaker_media_player_id
+    media_pipeline:
+      speaker: media_spk_resampling_input
+      num_channels: 2
+    announcement_pipeline:
+      speaker: announcement_spk_resampling_input
+      num_channels: 1
+
+# --- Lista de la compra (viene de un input_text que rellena una automatización en HA) ---
+text_sensor:
+  - platform: homeassistant
+    id: shopping_list_text
+    entity_id: input_text.shopping_list_display
+    on_value:
+      - lvgl.label.update:
+          id: shopping_list_label
+          text: !lambda 'return x;'
+
+# --- Voice Assistant: pulsa el botón y habla ---
+voice_assistant:
+  id: va
+  microphone: reterminal_mic
+  media_player: speaker_media_player_id
+  use_wake_word: false
+  on_listening:
+    - lvgl.label.update:
+        id: va_status_label
+        text: "Listening..."
+  on_stt_vad_end:
+    - lvgl.label.update:
+        id: va_status_label
+        text: "Processing..."
+  on_tts_start:
+    - lvgl.label.update:
+        id: va_status_label
+        text: "Responding..."
+  on_end:
+    - lvgl.label.update:
+        id: va_status_label
+        text: "Press to talk"
+  on_error:
+    - lvgl.label.update:
+        id: va_status_label
+        text: "Error, try again"
+
+# --- GUI mínima: solo el botón de voz ---
+lvgl:
+  displays:
+    - main_display
+  draw_rounding: 4
+  buffer_size: 75%
+  full_refresh: false
+  rotation: 270
+  byte_order: little_endian
+  bg_color: 0x000000
+  bg_opa: 100%
+  pages:
+    - id: power_down_page
+      bg_color: 0x000000
+      widgets:
+        - label:
+            id: power_down_label
+            text: "Powering off"
+            align: center
+            text_color: white
+            text_font: montserrat_48
+            text_align: center
+            width: 50%
+    - id: main_page
+      bg_color: 0x000000
+      widgets:
+        - obj:
+            id: main_root
+            width: 100%
+            height: 100%
+            bg_color: 0x000000
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+            layout:
+              type: flex
+              flex_flow: row
+              flex_align_cross: STRETCH
+            widgets:
+              # --- Panel izquierdo: lista de la compra ---
+              - obj:
+                  id: shopping_list_panel
+                  width: 70%
+                  height: 100%
+                  bg_color: 0x000000
+                  border_width: 0
+                  pad_all: 24px
+                  scrollable: false
+                  layout:
+                    type: flex
+                    flex_flow: column
+                    pad_row: 12px
+                  widgets:
+                    - label:
+                        text: "Shopping List"
+                        text_font: montserrat_36
+                        text_color: 0xFFFFFF
+                    - obj:
+                        width: 60
+                        height: 4
+                        radius: 2
+                        bg_color: 0xFF4444
+                        border_width: 0
+                    - obj:
+                        id: shopping_list_scroll
+                        width: 100%
+                        flex_grow: 1
+                        bg_color: 0x1A1A1A
+                        radius: 16
+                        border_width: 0
+                        scrollable: true
+                        pad_all: 18px
+                        widgets:
+                          - label:
+                              id: shopping_list_label
+                              width: 100%
+                              long_mode: WRAP
+                              text_font: montserrat_24
+                              text_color: 0xEEEEEE
+                              text: "Loading..."
+              # --- Panel derecho: botón de voz + borrar lista ---
+              - obj:
+                  id: mic_panel
+                  width: 30%
+                  height: 100%
+                  bg_color: 0x000000
+                  border_width: 4
+                  border_side: LEFT
+                  border_color: 0x333333
+                  pad_all: 20px
+                  scrollable: false
+                  widgets:
+                    - button:
+                        id: mic_button
+                        align: center
+                        y: -50
+                        width: 160
+                        height: 160
+                        radius: circle
+                        bg_color: 0xFF4444
+                        widgets:
+                          - label:
+                              text: "Talk"
+                              text_font: montserrat_30
+                              align: center
+                              text_color: 0xFFFFFF
+                        on_press:
+                          - voice_assistant.start:
+                    - label:
+                        id: va_status_label
+                        align: center
+                        y: 60
+                        text: "Press to talk"
+                        text_font: montserrat_20
+                        text_color: 0xCCCCCC
+                    - button:
+                        id: clear_list_button
+                        align: bottom_right
+                        x: -10
+                        y: -10
+                        width: 140
+                        height: 50
+                        radius: 12
+                        bg_color: 0x555555
+                        widgets:
+                          - label:
+                              text: "Clear list"
+                              text_font: montserrat_16
+                              align: center
+                              text_color: 0xFFFFFF
+                        on_click:
+                          - logger.log: "Clear list button pressed"
+                          - homeassistant.action:
+                              action: script.clear_shopping_list

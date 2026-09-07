@@ -1,0 +1,13 @@
+alias: Clear shopping list
+sequence:
+  - action: todo.get_items
+    target:
+      entity_id: todo.shopping_list
+    response_variable: items_response
+  - action: todo.remove_item
+    target:
+      entity_id: todo.shopping_list
+    data:
+      item: >-
+        {{ items_response['todo.shopping_list']['items'] | map(attribute='uid')
+        | list }}

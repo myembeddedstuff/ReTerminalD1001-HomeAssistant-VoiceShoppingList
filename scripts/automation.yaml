@@ -1,0 +1,20 @@
+alias: SynchroList
+triggers:
+  - entity_id: todo.shopping_list
+    trigger: state
+  - seconds: /30
+    trigger: time_pattern
+actions:
+  - action: todo.get_items
+    target:
+      entity_id: todo.shopping_list
+    data:
+      status: needs_action
+    response_variable: items_response
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.shopping_list_display
+    data:
+      value: >
+        {{ items_response['todo.shopping_list']['items'] |
+        map(attribute='summary') | join('\n') }}
