@@ -2,6 +2,8 @@
 
 ESPHome config and Home Assistant scripts/automations for a voice controlled shopping list built on the Seeed reTerminal D1001, using Whisper and Piper.
 
+![ReTerminal D1001](ReTerminalD1001.jpg)
+
 ## What's in here
 
 * ESPHome YAML for flashing the reTerminal D1001
